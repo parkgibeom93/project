@@ -1,54 +1,57 @@
-import tensorflow as tf
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import cv2
+import numpy as np
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.models import load_model
 
-# 데이터 경로 설정 (본인의 데이터 경로로 수정)
-train_data_dir = 'path/to/your/train_data'
-validation_data_dir = 'path/to/your/validation_data'
+# MobileNetV2 모델 로드 (이미 사전 훈련된 가중치 포함)
+classification_model = MobileNetV2(weights="imagenet")
 
-# 이미지 데이터 생성기 설정
-train_datagen = ImageDataGenerator(rescale=1./255,
-                                   shear_range=0.2,
-                                   zoom_range=0.2,
-                                   horizontal_flip=True)
+# 카메라 초기화
+cap = cv2.VideoCapture(0)
 
-validation_datagen = ImageDataGenerator(rescale=1./255)
+# 모델 로드 (본인이 학습한 모델 경로로 수정)
+pet_bottle_model = load_model('path/to/your/pet_bottle_label_classification_model.h5')
 
-# 학습 데이터 로드 및 전처리
-train_generator = train_datagen.flow_from_directory(train_data_dir,
-                                                    target_size=(150, 150),
-                                                    batch_size=32,
-                                                    class_mode='binary')
+while True:
+    # 프레임 읽기
+    ret, frame = cap.read()
 
-# 검증 데이터 로드 및 전처리
-validation_generator = validation_datagen.flow_from_directory(validation_data_dir,
-                                                              target_size=(150, 150),
-                                                              batch_size=32,
-                                                              class_mode='binary')
+    # 이미지 전처리
+    frame = cv2.resize(frame, (224, 224))
+    frame_for_classification = img_to_array(frame)
+    frame_for_classification = preprocess_input(frame_for_classification)
+    frame_for_classification = np.expand_dims(frame_for_classification, axis=0)
 
-# 모델 구성
-model = tf.keras.models.Sequential([
-    tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(150, 150, 3)),
-    tf.keras.layers.MaxPooling2D(2, 2),
-    tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
-    tf.keras.layers.MaxPooling2D(2, 2),
-    tf.keras.layers.Conv2D(128, (3, 3), activation='relu'),
-    tf.keras.layers.MaxPooling2D(2, 2),
-    tf.keras.layers.Flatten(),
-    tf.keras.layers.Dense(128, activation='relu'),
-    tf.keras.layers.Dense(1, activation='sigmoid')
-])
+    # 플라스틱 병 라벨 분류
+    classification_predictions = classification_model.predict(frame_for_classification)
+    classification_label = decode_predictions(classification_predictions)
+    classification_label = classification_label[0][0][1]
 
-# 모델 컴파일
-model.compile(loss='binary_crossentropy',
-              optimizer=tf.keras.optimizers.RMSprop(learning_rate=0.001),
-              metrics=['accuracy'])
+    # 플라스틱 병 라벨에 따라 예측
+    if classification_label == 'plastic_bottle':
+        # 플라스틱 병 라벨이면 딥러닝 모델로 예측
+        classification_for_pet_bottle = img_to_array(frame)
+        classification_for_pet_bottle = np.expand_dims(classification_for_pet_bottle, axis=0)
+        pet_bottle_prediction = pet_bottle_model.predict(classification_for_pet_bottle)
 
-# 모델 학습
-model.fit(train_generator,
-          steps_per_epoch=train_generator.samples // train_generator.batch_size,
-          epochs=50,
-          validation_data=validation_generator,
-          validation_steps=validation_generator.samples // validation_generator.batch_size)
+        # 예측 결과 디코딩
+        pet_bottle_label = "Plastic Bottle" if pet_bottle_prediction[0][0] > 0.5 else "Not a Plastic Bottle"
 
-# 모델 저장 (본인이 원하는 경로로 수정)
-model.save('path/to/your/pet_bottle_label_classification_model.h5')
+        # 화면에 표시
+        cv2.putText(frame, f"Label: {pet_bottle_label}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+    # 화면에 플라스틱 병 라벨 표시
+    cv2.putText(frame, f"Plastic Bottle Label: {classification_label}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+    # 화면에 표시
+    cv2.imshow("Plastic Bottle Label Classifier", frame)
+
+    # 'q' 키를 누르면 종료
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# 카메라 해제 및 윈도우 닫기
+cap.release()
+cv2.destroyAllWindows()
